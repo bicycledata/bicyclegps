@@ -27,10 +27,7 @@ class BicycleGPS(BicycleSensor):
 
       while self._alive:
         try:
-          line = ser.readline()
-          print(line)
-          sentence = NMEA0183.bytes_to_sentence(line)
-          print(sentence)
+          sentence = NMEA0183.bytes_to_sentence(ser.readline())
         except Exception as e:
           pass
         except KeyboardInterrupt:
