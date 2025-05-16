@@ -7,15 +7,15 @@ import serial
 from serial.serialutil import EIGHTBITS, PARITY_NONE, STOPBITS_ONE
 
 import NMEA0183
-from BicycleSensor import BicycleSensor, configure
+from BicycleSensor import BicycleSensor, setup_logging
 
 
 class BicycleGPS(BicycleSensor):
   def write_header(self):
-    self.write_to_file('time, gps_time, latitude, longitude, altitude')
+    return 'time, gps_time, latitude, longitude, altitude'
 
   def write_measurement(self):
-    self.write_to_file(f'{str(time.time())}, {self._gps_time}, {self._latitude}, {self._longitude}, {self._altitude}')
+    self.data_buffer.append(f'{str(time.time())}, {self._gps_time}, {self._latitude}, {self._longitude}, {self._altitude}')
 
   def worker_main(self):
     self._gps_time = None
@@ -25,7 +25,7 @@ class BicycleGPS(BicycleSensor):
     with serial.Serial('/dev/serial0', baudrate=9600, parity=PARITY_NONE, bytesize=EIGHTBITS, stopbits=STOPBITS_ONE) as ser:
       ser.readline() # trash first line
 
-      while self._alive:
+      while self.alive:
         try:
           sentence = NMEA0183.bytes_to_sentence(ser.readline())
         except Exception as e:
@@ -66,7 +66,7 @@ if __name__ == '__main__':
   ARGS = PARSER.parse_args()
 
   # Configure logging
-  configure('bicyclegps.log', stdout=ARGS.stdout, rotating=True, loglevel=ARGS.loglevel)
+  setup_logging('bicyclegps.log', stdout=ARGS.stdout, rotating=True, loglevel=ARGS.loglevel)
 
-  sensor = BicycleGPS(ARGS.name, ARGS.hash, ARGS.measurement_frequency, ARGS.upload_interval, use_worker_thread=True)
+  sensor = BicycleGPS(ARGS.name, ARGS.hash, ARGS.measurement_frequency, ARGS.upload_interval)
   sensor.main()
