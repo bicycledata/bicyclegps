@@ -18,11 +18,12 @@ class BicycleGPS(BicycleSensor):
     self.data_buffer.append(f'{str(time.time())}, {self._gps_time}, {self._latitude}, {self._longitude}, {self._altitude}')
 
   def worker_main(self):
+    self._gps_time = None
+    self._latitude = None
+    self._longitude = None
+    self._altitude = None
+
     def worker():
-      self._gps_time = None
-      self._latitude = None
-      self._longitude = None
-      self._altitude = None
       with serial.Serial('/dev/serial0', baudrate=9600, parity=PARITY_NONE, bytesize=EIGHTBITS, stopbits=STOPBITS_ONE) as ser:
         ser.readline() # trash first line
 
