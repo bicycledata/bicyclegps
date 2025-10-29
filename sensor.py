@@ -24,7 +24,7 @@ def main(bicycleinit: Connection, name: str, args: dict):
   port = args.get('port', '/dev/ttyACM0')
 
   try:
-    ser = serial.Serial(port, baudrate=9600, parity=PARITY_NONE, bytesize=EIGHTBITS, stopbits=STOPBITS_ONE, timeout=5.0)
+    ser = serial.Serial(port, baudrate=4800, parity=PARITY_NONE, bytesize=EIGHTBITS, stopbits=STOPBITS_ONE, timeout=5.0)
   except serial.SerialException as e:
     sensor.send_msg(f'Error opening serial port {port}: {e}')
     return
