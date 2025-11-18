@@ -1,72 +1,84 @@
-#!/usr/bin/env python3
+import traceback
+from multiprocessing.connection import Connection
 
-import argparse
-import time
-
+import pynmea2
 import serial
 from serial.serialutil import EIGHTBITS, PARITY_NONE, STOPBITS_ONE
 
-import NMEA0183
-from BicycleSensor import BicycleSensor, configure
+from bicycleinit.BicycleSensor import BicycleSensor
 
+svs = []
+pdop = None
+hdop = None
+vdop = None
 
-class BicycleGPS(BicycleSensor):
-  def write_header(self):
-    self.write_to_file('time, gps_time, latitude, longitude, altitude')
+def parse_gps_stats(sentence):
+  global svs, pdop, hdop, vdop
+  try:
+    msg = pynmea2.parse(sentence)
 
-  def write_measurement(self):
-    self.write_to_file(f'{str(time.time())}, {self._gps_time}, {self._latitude}, {self._longitude}, {self._altitude}')
+    # GSA contains satellites used and DOP values
+    if msg.sentence_type == 'GSA':
+      svs = []
+      for i in range(1, 13):
+        attr = f'sv_id{i:02d}'
+        val = getattr(msg, attr, None)
+        if val and str(val).strip():
+          svs.append(str(val).strip())
 
-  def worker_main(self):
-    self._gps_time = None
-    self._latitude = None
-    self._longitude = None
-    self._altitude = None
-    with serial.Serial('/dev/serial0', baudrate=9600, parity=PARITY_NONE, bytesize=EIGHTBITS, stopbits=STOPBITS_ONE) as ser:
-      ser.readline() # trash first line
+      pdop = getattr(msg, 'pdop', None)
+      hdop = getattr(msg, 'hdop', None)
+      vdop = getattr(msg, 'vdop', None)
+      return svs, pdop, hdop, vdop
+  except pynmea2.nmea.ParseError:
+      pass
+  return None
 
-      while self._alive:
-        try:
-          sentence = NMEA0183.bytes_to_sentence(ser.readline())
-        except Exception as e:
-          pass
-        except KeyboardInterrupt:
-          pass
-        else:
-          if sentence.topic == b'RMC':
-            try:
-              rmc = NMEA0183.RMC(sentence)
-            except Exception:
-              pass
-            else:
-              self._gps_time = rmc.time
-              self._latitude = rmc.latitude
-              self._longitude = rmc.longitude
-          elif sentence.topic == b'GGA':
-            try:
-              gga = NMEA0183.GGA(sentence)
-            except Exception:
-              pass
-            else:
-              self._altitude = gga.altitude
+def parse_nmea_sentence(sentence):
+  try:
+    msg = pynmea2.parse(sentence)
+    # Only process GLL sentences
+    if msg.sentence_type == 'GLL' and msg.status == 'A':
+      return msg.latitude, msg.longitude
+  except pynmea2.nmea.ParseError:
+      pass
+  return None
 
+def main(bicycleinit: Connection, name: str, args: dict):
+  global svs, pdop, hdop, vdop
 
-if __name__ == '__main__':
-  PARSER = argparse.ArgumentParser(
-    description='Sensor Template',
-    allow_abbrev=False,
-    formatter_class=argparse.ArgumentDefaultsHelpFormatter
-  )
-  PARSER.add_argument('--hash', type=str, required=True, help='[required] hash of the device')
-  PARSER.add_argument('--name', type=str, required=True, help='[required] name of the sensor')
-  PARSER.add_argument('--loglevel', type=str, default='INFO', help='Set the logging level (e.g., DEBUG, INFO, WARNING)')
-  PARSER.add_argument('--measurement-frequency', type=float, default=1.0, help='Frequency of sensor measurements in 1/s')
-  PARSER.add_argument('--stdout', action='store_true', help='Enables logging to stdout')
-  PARSER.add_argument('--upload-interval', type=float, default=300.0, help='Interval between uploads in seconds')
-  ARGS = PARSER.parse_args()
+  sensor = BicycleSensor(bicycleinit, name, args)
 
-  # Configure logging
-  configure('bicyclegps.log', stdout=ARGS.stdout, rotating=True, loglevel=ARGS.loglevel)
+  port = args.get('port', '/dev/ttyACM0')
 
-  sensor = BicycleGPS(ARGS.name, ARGS.hash, ARGS.measurement_frequency, ARGS.upload_interval, use_worker_thread=True)
-  sensor.main()
+  try:
+    ser = serial.Serial(port, baudrate=9600, parity=PARITY_NONE, bytesize=EIGHTBITS, stopbits=STOPBITS_ONE, timeout=5.0)
+  except serial.SerialException as e:
+    sensor.send_msg(f'Error opening serial port {port}: {e}')
+    return
+
+  sensor.write_header(['latitude', 'longitude', 'sv_used', 'hdop', 'pdop', 'vdop'])
+
+  try:
+    while True:
+      line = ser.readline().decode('ascii', errors='ignore').strip()
+
+      parse_gps_stats(line)
+      gps_stats = ['|'.join(svs), hdop, pdop, vdop]
+
+      gps_data = parse_nmea_sentence(line)
+
+      if gps_data is not None:
+        sensor.write_measurement(list(gps_data) + gps_stats)
+
+  except KeyboardInterrupt:
+    pass
+  except Exception as e:
+    sensor.send_msg({'type': 'log', 'level': 'error', 'msg': str(e)})
+    sensor.send_msg({'type': 'log', 'level': 'error', 'msg': traceback.format_exc()})
+  finally:
+    ser.close()
+    sensor.shutdown()
+
+if __name__ == "__main__":
+  main(None, "bicyclegps", {'port': '/dev/ttyACM0'})
